@@ -1,0 +1,81 @@
+diff --git a/build/core/build-binary.mk b/build/core/build-binary.mk
+index 3601c32..4bf672b 100644
+--- a/build/core/build-binary.mk
++++ b/build/core/build-binary.mk
+@@ -515,7 +515,11 @@ $(LOCAL_BUILT_MODULE): PRIVATE_LIBGCC := $(TARGET_LIBGCC)
+ 
+ $(LOCAL_BUILT_MODULE): PRIVATE_LD := $(TARGET_LD)
+ $(LOCAL_BUILT_MODULE): PRIVATE_LDFLAGS := $(TARGET_LDFLAGS) $(LOCAL_LDFLAGS) $(NDK_APP_LDFLAGS)
++ifeq ($(LOCAL_FORCE_STATIC_EXECUTABLE),true)
++$(LOCAL_BUILT_MODULE): PRIVATE_LDLIBS  := $(LOCAL_LDLIBS)
++else
+ $(LOCAL_BUILT_MODULE): PRIVATE_LDLIBS  := $(LOCAL_LDLIBS) $(TARGET_LDLIBS)
++endif
+ 
+ $(LOCAL_BUILT_MODULE): PRIVATE_NAME := $(notdir $(LOCAL_BUILT_MODULE))
+ $(LOCAL_BUILT_MODULE): PRIVATE_CXX := $(TARGET_CXX)
+@@ -670,15 +674,26 @@ endif
+ #
+ # If this is an executable module
+ #
++ifeq ($(LOCAL_FORCE_STATIC_EXECUTABLE),true)
+ ifeq ($(call module-get-class,$(LOCAL_MODULE)),EXECUTABLE)
+ $(LOCAL_BUILT_MODULE): PRIVATE_ABI := $(TARGET_ARCH_ABI)
+-$(LOCAL_BUILT_MODULE): PRIVATE_BUILD_EXECUTABLE := $(cmd-build-executable)
++$(LOCAL_BUILT_MODULE): PRIVATE_BUILD_EXECUTABLE := $(cmd-build-executable-static-link)
+ $(LOCAL_BUILT_MODULE): $(LOCAL_OBJECTS)
+ 	$(call host-echo-build-step,$(PRIVATE_ABI),Executable) "$(PRIVATE_NAME)"
+ 	$(hide) $(PRIVATE_BUILD_EXECUTABLE)
+ 
+ ALL_EXECUTABLES += $(LOCAL_BUILT_MODULE)
+ endif
++else
++ifeq ($(call module-get-class,$(LOCAL_MODULE)),EXECUTABLE)
++$(LOCAL_BUILT_MODULE): PRIVATE_ABI := $(TARGET_ARCH_ABI)
++$(LOCAL_BUILT_MODULE): PRIVATE_BUILD_EXECUTABLE := $(cmd-build-executable)
++$(LOCAL_BUILT_MODULE): $(LOCAL_OBJECTS)
++	$(call host-echo-build-step,$(PRIVATE_ABI),Executable) "$(PRIVATE_NAME)"
++	$(hide) $(PRIVATE_BUILD_EXECUTABLE)
++ALL_EXECUTABLES += $(LOCAL_BUILT_MODULE)
++endif
++endif
+ 
+ #
+ # If this is a copyable prebuilt module
+diff --git a/build/core/default-build-commands.mk b/build/core/default-build-commands.mk
+index d00be95..3a96e3e 100644
+--- a/build/core/default-build-commands.mk
++++ b/build/core/default-build-commands.mk
+@@ -86,6 +86,18 @@ endef
+ # ld.gold (default for ARM and X86) and ld.mcld don't emulate this buggy behavior,
+ # and ignore -rpath-link completely.
+ 
++define cmd-build-executable-static-link
++$(PRIVATE_CXX) \
++    -nostdlib -Bstatic -Wl,--gc-sections \
++    -Wl,-z,nocopyreloc \
++    --sysroot=$(call host-path,$(PRIVATE_SYSROOT_LINK)) \
++    -Wl,-rpath-link=$(call host-path,$(PRIVATE_SYSROOT_LINK)/usr/lib) \
++    -Wl,-rpath-link=$(call host-path,$(TARGET_OUT)) \
++    $(PRIVATE_LINKER_OBJECTS_AND_LIBRARIES) \
++    $(PRIVATE_LDFLAGS) \
++    $(PRIVATE_LDLIBS) \
++    -o $(call host-path,$(LOCAL_BUILT_MODULE))
++endef
+ define cmd-build-executable
+ $(PRIVATE_CXX) \
+     -Wl,--gc-sections \
+diff --git a/build/core/setup-toolchain.mk b/build/core/setup-toolchain.mk
+index 16c64f0..d750286 100644
+--- a/build/core/setup-toolchain.mk
++++ b/build/core/setup-toolchain.mk
+@@ -220,7 +220,9 @@ $(call ndk-stl-select,$(NDK_APP_STL))
+ # module declarations, but does not populate the dependency graph yet.
+ include $(NDK_APP_BUILD_SCRIPT)
+ 
++ifneq ($(LOCAL_FORCE_STATIC_EXECUTABLE),true)
+ $(call ndk-stl-add-dependencies,$(NDK_APP_STL))
++endif
+ 
+ # recompute all dependencies between modules
+ $(call modules-compute-dependencies)
